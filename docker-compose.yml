@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  notebook:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+    volumes:
+      - notebook_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  notebook_data:
