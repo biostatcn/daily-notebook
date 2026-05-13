@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import type { Note, NoteCategory } from '@/lib/types';
 import {
   getAllNotes,
@@ -8,38 +9,58 @@ import {
   updateNote,
   deleteNote,
   searchNotes,
-} from '@/lib/client-storage';
+} from '@/lib/supabase-storage';
+import { supabase } from '@/lib/supabase';
 import Sidebar from '@/components/Sidebar';
 import SearchBar from '@/components/SearchBar';
 import NoteList from '@/components/NoteList';
 import NoteEditor from '@/components/NoteEditor';
 import MarkdownViewer from '@/components/MarkdownViewer';
 import AICreateDialog from '@/components/AICreateDialog';
+import MigrateDialog from '@/components/MigrateDialog';
 
 type ViewState = 'empty' | 'viewing' | 'editing';
 
 export default function Home() {
+  const router = useRouter();
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<NoteCategory | null>(null);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewState, setViewState] = useState<ViewState>('empty');
   const [showAIDialog, setShowAIDialog] = useState(false);
+  const [showMigrate, setShowMigrate] = useState(false);
   const [editingNote, setEditingNote] = useState<Note | null>(null);
+
+  // Check auth on mount
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) {
+        router.push('/daily-notebook/login');
+        return;
+      }
+      setUserEmail(session.user.email ?? '');
+      setAuthLoading(false);
+      refreshNotes();
+    });
+  }, [router]);
 
   const selectedNote = notes.find((n) => n.id === selectedId) ?? null;
 
-  function refreshNotes(query?: string) {
-    const data = query ? searchNotes(query) : getAllNotes();
-    setNotes(data);
-    setLoading(false);
+  async function refreshNotes(query?: string) {
+    try {
+      const data = query ? await searchNotes(query) : await getAllNotes();
+      setNotes(data);
+    } catch (err) {
+      console.error('Failed to load notes:', err);
+    } finally {
+      setLoading(false);
+    }
   }
-
-  useEffect(() => {
-    refreshNotes();
-  }, []);
 
   const allTags = useMemo(() => {
     const tagSet = new Set<string>();
@@ -88,33 +109,38 @@ export default function Home() {
     source?: string;
   }) {
     if (editingNote) {
-      updateNote(editingNote.id, data);
+      await updateNote(editingNote.id, data);
     } else {
-      createNote(data);
+      await createNote(data);
     }
-    refreshNotes(searchQuery);
+    await refreshNotes(searchQuery);
     setViewState('empty');
     setEditingNote(null);
     setSelectedId(null);
   }
 
-  function handleDelete() {
+  async function handleDelete() {
     if (!selectedNote || !confirm('确定删除这条笔记吗？')) return;
-    deleteNote(selectedNote.id);
+    await deleteNote(selectedNote.id);
     setSelectedId(null);
     setViewState('empty');
-    refreshNotes(searchQuery);
+    await refreshNotes(searchQuery);
   }
 
-  function handleTogglePin() {
+  async function handleTogglePin() {
     if (!selectedNote) return;
-    updateNote(selectedNote.id, { pinned: !selectedNote.pinned });
-    refreshNotes(searchQuery);
+    await updateNote(selectedNote.id, { pinned: !selectedNote.pinned });
+    await refreshNotes(searchQuery);
   }
 
   function handleSearchChange(query: string) {
     setSearchQuery(query);
     refreshNotes(query || undefined);
+  }
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    router.push('/daily-notebook/login');
   }
 
   const categoryColor: Record<string, string> = {
@@ -129,10 +155,18 @@ export default function Home() {
     code: '代码', tool: '工具', skill: '技能', article: '文章', file: '文件', other: '其他',
   };
 
+  if (authLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full">
       {/* Sidebar */}
-      <div className="hidden md:block w-56 shrink-0">
+      <div className="hidden md:flex w-56 shrink-0 flex-col">
         <Sidebar
           selectedCategory={selectedCategory}
           onSelectCategory={(cat) => {
@@ -149,11 +183,43 @@ export default function Home() {
           }}
           totalCount={notes.length}
         />
+        {/* User info & logout */}
+        <div className="border-t border-gray-200 dark:border-gray-700 p-3 space-y-2">
+          {userEmail && (
+            <p className="text-xs text-gray-400 dark:text-gray-500 truncate">
+              {userEmail}
+            </p>
+          )}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowMigrate(true)}
+              className="flex-1 rounded-md px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              title="从浏览器本地导入数据"
+            >
+              导入数据
+            </button>
+            <button
+              onClick={handleLogout}
+              className="rounded-md px-2 py-1 text-xs text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors"
+            >
+              退出
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Middle column - Note list */}
       <div className="flex w-full md:w-72 shrink-0 flex-col border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950">
         <div className="border-b border-gray-200 dark:border-gray-700 p-3 space-y-2">
+          <div className="flex items-center justify-between md:hidden">
+            <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">日常记事本</span>
+            <button
+              onClick={handleLogout}
+              className="text-xs text-red-500 hover:text-red-600"
+            >
+              退出
+            </button>
+          </div>
           <SearchBar value={searchQuery} onChange={handleSearchChange} />
           <div className="flex gap-2">
             <button
@@ -341,6 +407,12 @@ export default function Home() {
         open={showAIDialog}
         onClose={() => setShowAIDialog(false)}
         onSave={handleSave}
+      />
+
+      {/* Migrate Dialog */}
+      <MigrateDialog
+        open={showMigrate}
+        onClose={() => setShowMigrate(false)}
       />
     </div>
   );
