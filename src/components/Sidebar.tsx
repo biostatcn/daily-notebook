@@ -1,5 +1,6 @@
 'use client';
 
+import { usePathname } from 'next/navigation';
 import { CATEGORIES, type NoteCategory } from '@/lib/types';
 
 interface SidebarProps {
@@ -19,6 +20,9 @@ export default function Sidebar({
   onSelectTag,
   totalCount,
 }: SidebarProps) {
+  const pathname = usePathname();
+  const isTodoPage = pathname === '/daily-notebook/todo';
+
   return (
     <aside className="flex h-full flex-col border-r border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
       <div className="p-4">
@@ -63,6 +67,24 @@ export default function Sidebar({
               {cat.label}
             </button>
           ))}
+        </div>
+
+        <div className="mb-3">
+          <h3 className="mb-2 px-2 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+            工具
+          </h3>
+          <a
+            href="https://biostatcn.github.io/todo-app/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`block w-full rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+              isTodoPage
+                ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
+                : 'text-gray-700 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-800'
+            }`}
+          >
+            ☑ 待办事项
+          </a>
         </div>
 
         {tags.length > 0 && (
